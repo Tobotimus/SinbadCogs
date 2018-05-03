@@ -11,6 +11,7 @@ from redbot.core.utils.mod import mass_purge, slow_deletion
 
 from .relay import NwayRelay, OnewayRelay
 from .helpers import unique, embed_from_msg, txt_channel_finder
+from .webhook_send import hooked_send
 
 _ = CogI18n("Relays", __file__)
 
@@ -54,7 +55,7 @@ class Relays:
     """
 
     __author__ = 'mikeshardmind(Sinbad#0001)'
-    __version__ = '1.0.0b'
+    __version__ = '1.1.0b'
 
     def __init__(self, bot: Red):
         self. bot = bot
@@ -62,7 +63,11 @@ class Relays:
             self, identifier=78631113035100160,
             force_registration=True
         )
-        self.config.register_global(one_ways={}, nways={})
+        self.config.register_global(
+            one_ways={},
+            nways={},
+            webhooked={}
+        )
         self.bot.loop.create_task(self.initialize())
 
     async def __before_invoke(self, ctx):
@@ -83,6 +88,7 @@ class Relays:
             k: OnewayRelay.from_data(self.bot, **v)
             for k, v in onewaydict.items()
         }
+        self.hooked = await self.config.webhooked()
 
     async def write_data(self):
         nway_data = {
@@ -100,11 +106,37 @@ class Relays:
 
     @property
     def relay_objs(self):
-        return list(self.oneways.values()) + list(self.nways.values())
+        ret = [
+            v for k, v in self.nways.items()
+            if k not in self.hooked['oneway']
+        ]
+        ret += [
+            v for k, v in self.oneways.items()
+            if k not in self.hooked['oneway']
+        ]
+        return ret
 
-    def gather_destinations(self, message: discord.Message):
+    @property
+    def hook_objs(self):
+        ret = [
+            v for k, v in self.nways.items()
+            if k in self.hooked['oneway']
+        ]
+        ret += [
+            v for k, v in self.oneways.items()
+            if k in self.hooked['oneway']
+        ]
+        return ret
+
+    def gather_embed_destinations(self, message: discord.Message):
         chans = []
         for r in self.relay_objs:
+            chans.extend(r.get_destinations(message))
+        return unique(chans)
+
+    def gather_hook_destinations(self, message: discord.Message):
+        chans = []
+        for r in self.hook_objs:
             chans.extend(r.get_destinations(message))
         return unique(chans)
 
@@ -113,10 +145,12 @@ class Relays:
             return
         while not hasattr(self, 'oneways'):
             asyncio.sleep(2)
-        for dest in self.gather_destinations(message):
+        for dest in self.gather_embed_destinations(message):
             await dest.send(
                 embed=embed_from_msg(message)
             )
+        for dest in self.gather_hook_detsinations(message):
+            await hooked_send(dest, message)
 
     def validate_inputs(self, *chaninfo: str):
         ret = {}
